@@ -609,7 +609,7 @@ describe('sandbox escalation through the generic task producer', () => {
     const prompted = vi.fn()
     ctx.on('approval/request', () => { prompted(); return Promise.resolve<ApprovalOutcome>('allowed-once') })
     const result = await call(ctx, 'bash', { ...escalate, sandbox_permissions: 'workspace-write' }, sandboxAgent('workspace-write'))
-    expect(text(result)).toContain('not strictly wider')
+    expect(text(result)).toContain('ok')
     expect(prompted).not.toHaveBeenCalled()
 
     const malformed = sandboxAgent()
@@ -684,6 +684,21 @@ describe('sandbox escalation through the generic task producer', () => {
     expect(start).not.toHaveBeenCalled()
   })
 
+  it('treats a same-level danger-full-access request as an ordinary call', async () => {
+    const { ctx, bash } = await setupSandboxed(true)
+    const prompted = vi.fn()
+    ctx.on('approval/request', () => { prompted(); return Promise.resolve<ApprovalOutcome>('allowed-once') })
+    const agent = sandboxAgent('danger-full-access')
+    const result = await call(ctx, 'bash', {
+      command: 'true',
+      description: 'same-level access',
+      sandbox_permissions: 'danger-full-access',
+      justification: 'the command needs full access',
+    }, agent)
+    expect(result.isError).toBe(false)
+    expect(prompted).not.toHaveBeenCalled()
+    expect(bash.modes).toEqual(['danger-full-access'])
+  })
   it('uses the session override for ordinary calls and evaluates widening against it', async () => {
     const { ctx, bash } = await setupSandboxed(true)
     const agent = sandboxAgent('workspace-write')

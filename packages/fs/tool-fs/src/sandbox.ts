@@ -94,6 +94,7 @@ export class FsSandboxController {
       throw new Error('sandbox_permissions is not available in this composition (no sandboxing filesystem to escalate)')
     }
     const policy = standingPolicy as SandboxExecutionPolicy
+    if (args.sandbox_permissions === policy.mode) return policy
     const approvedMode = await approveEscalation(
       { requestedMode: args.sandbox_permissions, justification: args.justification, effectiveMode: policy.mode, subject: 'operation' },
       {
