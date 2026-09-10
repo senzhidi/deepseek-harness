@@ -6,10 +6,12 @@
 # 之后过期由 pi-ai 自动刷新,无需再跑本脚本。
 #
 # 用法:
-#   ./codex-login.sh repair   # 静默修复:用现有 refresh_token 换新(首选,零交互)
-#   ./codex-login.sh login    # 设备码登录:refresh_token 彻底失效时用,浏览器输码
+#   ./codex-login.sh repair        # 静默修复:用现有 refresh_token 换新(首选,零交互)
+#   ./codex-login.sh login         # 设备码登录:refresh_token 彻底失效时用,浏览器输码
+#   ./codex-login.sh import 文件   # 导入 CPA 下载的 Codex JSON(不会改 ~/.codex/auth.json)
 #
 # 代理端口非 7899 时:DSH_PROXY_PORT=端口 ./codex-login.sh repair
+# 测试/高级用法:DSH_CREDENTIALS_FILE=文件 可改写目标凭证库。
 
 set -u
 PROXY_PORT="${DSH_PROXY_PORT:-7899}"
@@ -17,7 +19,7 @@ export HTTPS_PROXY="http://127.0.0.1:$PROXY_PORT"
 export HTTP_PROXY="http://127.0.0.1:$PROXY_PORT"
 export NO_PROXY="127.0.0.1,localhost"
 REPO="$HOME/workspace/deepseek-harness"
-CRED="$HOME/.dsh/.credentials.yaml"
+CRED="${DSH_CREDENTIALS_FILE:-$HOME/.dsh/.credentials.yaml}"
 CLIENT_ID="app_EMoamEEZ73f0CkXaXp7hrann"
 
 record_upsert() { # $1=access $2=refresh $3=expires_ms
@@ -61,6 +63,53 @@ PYEOF
 }
 
 case "${1:-}" in
+import)
+  INPUT="${2:-}"
+  [ -n "$INPUT" ] || { echo "❌ 用法: $0 import /path/to/codex-account.json"; exit 1; }
+  [ -f "$INPUT" ] || { echo "❌ 找不到 CPA 凭证文件: $INPUT"; exit 1; }
+  PERMS=$(stat -f '%Lp' "$INPUT" 2>/dev/null || echo unknown)
+  if [ "$PERMS" != "unknown" ] && [ $((8#$PERMS & 8#077)) -ne 0 ]; then
+    echo "⚠️  凭证文件权限是 $PERMS；建议导入后执行: chmod 600 '$INPUT'"
+  fi
+  VALUES=$(python3 - "$INPUT" << 'PYEOF'
+import base64, datetime, json, sys
+
+path = sys.argv[1]
+try:
+    data = json.load(open(path))
+except (OSError, json.JSONDecodeError) as error:
+    sys.exit(f'❌ 无法读取 CPA JSON: {error}')
+if data.get('type') != 'codex':
+    sys.exit('❌ 这不是 CPA Codex 凭证(type 必须是 codex)')
+if data.get('disabled') is True:
+    sys.exit('❌ CPA 已将这条凭证标记为 disabled；拒绝导入')
+access = data.get('access_token')
+refresh = data.get('refresh_token')
+if not isinstance(access, str) or not access or not isinstance(refresh, str) or not refresh:
+    sys.exit('❌ CPA JSON 缺少非空 access_token/refresh_token')
+expires = None
+raw_expired = data.get('expired')
+if isinstance(raw_expired, str):
+    try:
+        expires = int(datetime.datetime.fromisoformat(raw_expired.replace('Z', '+00:00')).timestamp() * 1000)
+    except ValueError:
+        pass
+if expires is None:
+    try:
+        payload = access.split('.')[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
+        expires = int(claims['exp']) * 1000
+    except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        sys.exit('❌ CPA JSON 的 expired 与 access_token exp 都无法解析')
+print(access, refresh, expires)
+PYEOF
+  ) || exit 1
+  read -r A R E <<< "$VALUES"
+  record_upsert "$A" "$R" "$E"
+  echo "✅ 已从 CPA 格式转换为 DSH 的 llm-pi-ai/openai-codex grant"
+  echo "ℹ️  没有改动 ~/.codex/auth.json；运行 ~/workspace/deepseek-harness/start-dsh.sh 重启后生效"
+  ;;
+
 repair)
   RT=$(python3 - "$CRED" << 'PYEOF'
 import re, sys

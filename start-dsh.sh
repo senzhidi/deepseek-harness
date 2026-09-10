@@ -9,33 +9,39 @@ PROXY_PORT="${DSH_PROXY_PORT:-7899}"   # 本机 Clash 混合端口
 DIR="$HOME/workspace/deepseek-harness"
 LOG="${TMPDIR:-/tmp}/dsh-web.log"
 
-# 0. 用真实请求检查代理可用性(没跑只警告,不拦着启动:DeepSeek 渠道走公司网关不需要代理)
-if ! curl -s -o /dev/null -m 3 -x "http://127.0.0.1:$PROXY_PORT" https://chatgpt.com/ 2>/dev/null; then
-  echo "⚠️  无法通过 127.0.0.1:$PROXY_PORT 访问外网——Clash Verge 没开?Codex 登录/调用会失败。"
-  echo "    如果你的混合端口不是 $PROXY_PORT,用 DSH_PROXY_PORT=端口 重新运行。"
+# 0. Codex 官方登录与调用必须经代理；代理不可用时拒绝退回无代理启动。
+if ! nc -z 127.0.0.1 "$PROXY_PORT" 2>/dev/null \
+  || ! curl -s -o /dev/null -m 8 -x "http://127.0.0.1:$PROXY_PORT" https://chatgpt.com/ 2>/dev/null; then
+  echo "❌ 无法通过 127.0.0.1:$PROXY_PORT 访问 ChatGPT。请先启动 Clash Verge。"
+  echo "   如果混合端口不是 $PROXY_PORT,用 DSH_PROXY_PORT=端口 重新运行。"
+  exit 1
 fi
 
-# 1. 停掉旧实例(包括之前由 Cursor 终端启动的),等进程和端口真正释放
-pkill -f "pnpm dsh web" 2>/dev/null
-pkill -f "apps/cli/src/bin.ts web" 2>/dev/null
-for i in {1..10}; do
-  pgrep -f "apps/cli/src/bin.ts web" >/dev/null 2>&1 || break
-  sleep 1
-done
-pgrep -f "apps/cli/src/bin.ts web" >/dev/null 2>&1 && pkill -9 -f "apps/cli/src/bin.ts web" 2>/dev/null
-for i in {1..10}; do
-  curl -s -o /dev/null -m 1 http://127.0.0.1:3080/ 2>/dev/null || break
-  sleep 1
-done
-
-# 2. 带代理启动(NO_PROXY 保证本机 UI 和公司网关直连不受影响)
-#    直接用 node 启动,绕开 pnpm 的 run 前依赖校验(会联网装包,版本不一致时卡死)
-cd "$DIR"
-export HTTPS_PROXY="http://127.0.0.1:$PROXY_PORT"
-export HTTP_PROXY="http://127.0.0.1:$PROXY_PORT"
-export NO_PROXY="127.0.0.1,localhost"
-export NODE_USE_ENV_PROXY=1   # 让 Node 内置 fetch 也走代理(pi-ai 的 codex 请求是裸 fetch)
-nohup node --import tsx/esm apps/cli/src/bin.ts web --no-open >"$LOG" 2>&1 &
+# 1. Caster 留下的 LaunchAgent 已负责自启动和保活。若它存在，只重启该唯一实例；
+#    不能先 pkill 再 nohup，否则 KeepAlive 会同时拉起另一个进程并争抢 3080。
+LABEL="com.deepseek.harness.web"
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+if [[ -f "$PLIST" ]]; then
+  PLIST_PROXY=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:HTTPS_PROXY' "$PLIST" 2>/dev/null || true)
+  PLIST_NODE_PROXY=$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:NODE_USE_ENV_PROXY' "$PLIST" 2>/dev/null || true)
+  if [[ "$PLIST_PROXY" != "http://127.0.0.1:$PROXY_PORT" || "$PLIST_NODE_PROXY" != "1" ]]; then
+    echo "❌ $PLIST 未配置所需的 Codex 代理；拒绝启动可能直连或走错路由的实例。"
+    exit 1
+  fi
+  launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 \
+    || launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  launchctl kickstart -k "gui/$(id -u)/$LABEL"
+else
+  # 没有 LaunchAgent 时才由脚本托管一个后台实例。
+  pkill -f "pnpm dsh web" 2>/dev/null || true
+  pkill -f "apps/cli/src/bin.ts web" 2>/dev/null || true
+  cd "$DIR"
+  export HTTPS_PROXY="http://127.0.0.1:$PROXY_PORT"
+  export HTTP_PROXY="http://127.0.0.1:$PROXY_PORT"
+  export NO_PROXY="127.0.0.1,localhost"
+  export NODE_USE_ENV_PROXY=1
+  nohup node --import tsx/esm apps/cli/src/bin.ts web --no-open >"$LOG" 2>&1 &
+fi
 
 # 3. 等 3080 端口就绪
 for i in {1..20}; do
