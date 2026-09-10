@@ -15,10 +15,18 @@ if ! curl -s -o /dev/null -m 3 -x "http://127.0.0.1:$PROXY_PORT" https://chatgpt
   echo "    如果你的混合端口不是 $PROXY_PORT,用 DSH_PROXY_PORT=端口 重新运行。"
 fi
 
-# 1. 停掉旧实例(包括之前由 Cursor 终端启动的)
+# 1. 停掉旧实例(包括之前由 Cursor 终端启动的),等进程和端口真正释放
 pkill -f "pnpm dsh web" 2>/dev/null
 pkill -f "apps/cli/src/bin.ts web" 2>/dev/null
-sleep 1
+for i in {1..10}; do
+  pgrep -f "apps/cli/src/bin.ts web" >/dev/null 2>&1 || break
+  sleep 1
+done
+pgrep -f "apps/cli/src/bin.ts web" >/dev/null 2>&1 && pkill -9 -f "apps/cli/src/bin.ts web" 2>/dev/null
+for i in {1..10}; do
+  curl -s -o /dev/null -m 1 http://127.0.0.1:3080/ 2>/dev/null || break
+  sleep 1
+done
 
 # 2. 带代理启动(NO_PROXY 保证本机 UI 和公司网关直连不受影响)
 #    直接用 node 启动,绕开 pnpm 的 run 前依赖校验(会联网装包,版本不一致时卡死)
