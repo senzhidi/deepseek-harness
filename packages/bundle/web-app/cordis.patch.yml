@@ -100,6 +100,10 @@
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
 
+    # Trusted local mutation boundary for CPA-exported Codex OAuth grants.
+    - id: codex-credential-import
+      name: '@deepseek-ai/dsh-host-codex-credential-import'
+
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.
     - id: api-gateway
@@ -205,6 +209,9 @@
 
     - id: ui-settings-plugin-inventory
       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
+
+    - id: ui-codex-credential-import
+      name: '@deepseek-ai/dsh-client-ui-codex-credential-import'
 
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'

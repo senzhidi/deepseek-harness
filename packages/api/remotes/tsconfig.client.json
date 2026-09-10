@@ -40,6 +40,9 @@
       "path": "../../feedback/message-feedback"
     },
     {
+      "path": "../../host/codex-credential-import"
+    },
+    {
       "path": "../../host/plugin-inventory"
     },
     {
